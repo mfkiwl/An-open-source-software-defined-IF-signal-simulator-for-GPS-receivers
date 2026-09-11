@@ -101,6 +101,8 @@ bitPeriod = 0.001 * 20;
 coef = getFliterCoef(settings);
 % Open the IF file to save senerated samples 
 [fid, ~] = fopen(settings.IfFile, 'w');
+% The pseudorange of each satellite at each point in time
+pseudoRanges = zeros(length(satList), iterCnt);  
 
 % Start waitbar
 hwb = waitbar(0,'IF signal generating ...');
@@ -134,9 +136,12 @@ for loopCnt =  1:iterCnt
     for svIndex = 1:length(satList)
         % Compute the transmitting time coresponding to the Rx time -------
         PRN = satList(svIndex);
-        [TxTime,satClkErr] = GetTravelTime(RxTime,RxPosEcef,eph(PRN),settings);
+        [TxTime,satClkErr,ionoErr,pseudoRange] = GetTravelTime(RxTime,RxPosEcef,eph(PRN),ionoutc,settings);
         % include tgd, clock error and relativistic effect 
         TxTime = TxTime + satClkErr;
+
+        % save the pseudorange at the first reception time for each satellite
+        pseudoRanges(svIndex, loopCnt) = pseudoRange(1);
         
         % generate local code, carrier and Nav data -----------------------
         sapcing = (TxTime(2) - TxTime(1))/blockSize;
@@ -147,7 +152,7 @@ for loopCnt =  1:iterCnt
         if  settings.fileType == 1
             localCarr = cos(carrFreqRad * TxTimeSample - localOsFreq * RxTimeSample);
         elseif settings.fileType == 2
-            localCarr = exp(-1i*(carrFreqRad * TxTimeSample - localOsFreq * RxTimeSample));
+            localCarr = exp(1i*(carrFreqRad * TxTimeSample - localOsFreq * RxTimeSample));
         end
         
         % Local code samples
@@ -204,23 +209,35 @@ for loopCnt =  1:iterCnt
     end
     
     % ADC quantization ----------------------------------------------------
-    if strcmp(settings.dataType,'int8')
-        localSigSum = localSigSum/max(real(localSigSum)) * 2^7;
-        quantizedSig = int8(localSigSum);
-        fwrite(fid,quantizedSig,settings.dataType);
-    elseif strcmp(settings.dataType,'int16')
-        localSigSum = localSigSum/max(real(localSigSum)) * 2^12;
-        quantizedSig = int16(localSigSum); 
-        fwrite(fid,quantizedSig,settings.dataType);
-    end
-    
+    if settings.fileType == 1
+        if strcmp(settings.dataType,'int8')
+            localSigSum = localSigSum/max(real(localSigSum)) * 2^7;
+            quantizedSig = int8(localSigSum);
+            fwrite(fid,quantizedSig,settings.dataType);
+        elseif strcmp(settings.dataType,'int16')
+            localSigSum = localSigSum/max(real(localSigSum)) * 2^12;
+            quantizedSig = int16(localSigSum); 
+            fwrite(fid,quantizedSig,settings.dataType);
+        end
+    end 
     if settings.fileType == 2 
-        quantizedSig1 = reshape([real(quantizedSig);imag(quantizedSig)],[],1);
-        fwrite(fid,quantizedSig1,settings.dataType);
+        if strcmp(settings.dataType,'int8')
+            localSigSum = localSigSum/max(sqrt(real(localSigSum).^2+imag(localSigSum).^2)) * 2^7;
+            quantizedSig = int8(localSigSum);
+            quantizedSig1 = reshape([real(quantizedSig);imag(quantizedSig)],[],1);
+            fwrite(fid,quantizedSig1,settings.dataType);
+        elseif strcmp(settings.dataType,'int16')
+            localSigSum = localSigSum/max(sqrt(real(localSigSum).^2+imag(localSigSum).^2)) * 2^12;
+            quantizedSig = int16(localSigSum); 
+            quantizedSig1 = reshape([real(quantizedSig);imag(quantizedSig)],[],1);
+            fwrite(fid,quantizedSig,settings.dataType);
+        end
     end
     
 end
 %% clear environment
 fclose(fid);
 close(hwb) 
+
+
 
